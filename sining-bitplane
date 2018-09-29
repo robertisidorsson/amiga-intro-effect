@@ -1,0 +1,155 @@
+;---------------------------------------------------
+; Old school amiga 68k asm!
+;---------------------------------------------------
+
+openlib: 	equ -408
+	closelib:   equ -414
+	forbid:  	equ -120
+	permit:		equ -126
+
+	section	main,code_c
+ 
+ ;-----------------------------------------------------------------------
+ ; Bitplane and copper setup
+ ;------------------------------------------------------------------------
+	move.l 4.w,a6		
+	jsr forbid(a6)		; Forbid Multitasking
+	lea gfxlib(pc),a1	
+	jsr openlib(a6)		
+	move.l d0,gfxbase	
+	move.l #bitplane,d0	
+	move.w d0,bplptr+6	
+	swap d0			;
+	move.w d0,bplptr+2	
+	move.l #cop,$dff080	; Set new copperlist
+ 
+;---------------------------------------------------------------------------	
+; Copy character and initate scroll values	
+;---------------------------------------------------------------------------	
+
+	lea bitplane(pc),a0	
+	add.l #40*100+18,a0		
+	lea char(pc),a1		
+	move.l #16,d0		; Height of char = 16
+	
+copychar:	move.l (a1)+,(a0)	
+	add.l #40,a0			; Next line in bitplane
+	subq.l #1,d0			; Decrease heightcounter
+	bne.b copychar			
+	
+	lea.l scroll(pc), a2	; a2 points at scroll values
+	move.l #$6407fffe,d0	;
+	addq.w #15, linecount
+ 
+;-----------------------------------------------------------------------------
+; Main section and scrolling
+;-----------------------------------------------------------------------------
+main:	btst #6,$bfe001		; Left mouse clicked ?
+	beq.s exit				; No, continue loop	
+	bsr.s sync
+	
+	move.w linecount(pc), d7			; Number of rows to be affected by the effect
+	
+initscroll:	move.l d0,(a2)+
+	move.l #$01020000, (a2)+
+	add.l  #$01000000, d0
+	dbf d7,initscroll
+	
+	lea.l scrolltab(pc),a0		; scrolltable to a0
+	lea.l scroll(pc),a1; 		; scrolloffset to a1
+	move.w scrollvalue(pc),d0   ; current scrollvalue to d0
+	addq.w #2,scrollvalue
+	move.w linecount(pc), d7
+	
+movescroll:	and.w #63,d0
+	move.w (a0,d0.w),d1 		; current sinusvalue to d1
+	move.w d1,6(a1)				; move to copperlist
+	addq.l #8,a1				; increase to next sinus value
+	addq.w #2,d0
+	dbf d7, movescroll
+	
+	lea.l scroll(pc), a2		; increase wait instruction
+	add.l  #$01000000, (a2)		;
+	subq.w #1, linecount		; decrease number of lines to be sined
+	cmp.b #1, linecount			; only one line left? start over again
+	beq.s restore
+	
+	bra.s main
+	
+restore: addq.w #15, linecount	;sine 16 rows from line $64 again
+	move.l #$6407fffe, d0
+	rts
+	
+sync: cmp.b #$ff,$dff006	;wait for the beam to be in sync
+	bne.s sync
+	
+nextline: cmp.b #$ff,$dff006
+	beq.s nextline
+	rts
+	
+exit:	move.l gfxbase(pc),a1	
+	move.l 38(a1),$dff080	; Restore old copperlist
+	jsr permit(a6)
+	jsr closelib(a6)		
+	moveq #0,d0		
+	rts		
+ 
+;---------------------------------------------------------------------- 
+; Copper list etc
+; ----------------------------------------------------------------------
+ 
+cop:		dc.w	$0106,$0000,$01fc,$0000		; AGA compatible
+		dc.w	$008e,$1a64,$0090,$ffc4		; Setting up display,
+		dc.w	$0092,$0038,$0094,$00d0		; modulo and so on
+		dc.w	$0102,$0000,$0104,$0000
+		dc.w	$0106,$0000,$0108,$0000
+		dc.w	$0120,$0000,$0122,$0000		; Clear spriteptrs
+		dc.w	$0124,$0000,$0126,$0000
+		dc.w	$0128,$0000,$012a,$0000
+		dc.w	$012c,$0000,$012e,$0000
+		dc.w	$0130,$0000,$0132,$0000
+		dc.w	$0134,$0000,$0136,$0000
+		dc.w	$0138,$0000,$013a,$0000
+		dc.w	$013c,$0000,$013e,$0000
+		dc.w	$0100,$1200			; 1 Bitplane
+bplptr:		dc.w	$00e0,$0000			; Adress of bpl
+		dc.w	$00e2,$0000
+		dc.w	$0180,$0000			; Color00 = black
+		dc.w	$0182,$ff00			; Color01 = red
+		
+scroll:		blk.w	16*4;	;Allocate memory for scroll list
+		
+	dc.w	$ffff,$fffe
+ 
+char:	dc.l	%00000000000000000000000000000000				   	
+		dc.l	%00000000011111111111100000000000		   	
+		dc.l	%00000111111111111111111110000000       
+		dc.l	%00011111111111111111111111100000        
+		dc.l	%00111000001111111000011111111000	   	
+		dc.l	%00110000000111110000000111111000	    	
+		dc.l	%00110000000011110000000011111000		    	
+		dc.l	%00110000000011110000000011111000		   	
+		dc.l	%11111000001111111000001111111110		    	
+		dc.l	%11111111111111111111111111111110		   	
+		dc.l	%11111111111111111111111111111110           
+		dc.l	%11111111111111111111111111111110                               
+		dc.l	%11111111111111111111111111111110                              
+		dc.l	%11111111100111111111001111111110                              
+		dc.l	%11111111000011111110000111111110							    				
+		dc.l	%00011110000001111100000011111000
+
+bitplane:	blk.b	10240,0				; Space for one
+							; 320x256 bitplane
+							; 40 bytes each row
+							; (320 bits/pixels)
+scrollvalue: dc.w 0
+linecount: dc.w 0
+
+scrolltab: dc.w $88,$99,$bb,$cc,$dd,$ee,$ee,$ff
+	dc.w $ff,$ff,$ee,$ee,$dd,$cc,$bb,$99
+	dc.w $88,$77,$55,$44,$33,$22,$22,$11
+	dc.w $11,$11,$22,$22,$33,$44,$55,$77
+
+
+gfxlib:		dc.b	"graphics.library",0,0
+gfxbase:	dc.l	0
